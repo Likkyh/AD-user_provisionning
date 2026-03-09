@@ -18,7 +18,8 @@
 | Admin OU override | All Admin-role users go to `OU=Administrateur` regardless of CSV |
 | Password generation | 12-char for users, 18-char for admins (uppercase + symbol + digit) |
 | Credentials file | `USER_logins.txt` created with all initial passwords |
-| Password rotation | Fine-Grained Password Policies: 12 months (users), 6 months (admins) |
+| Password rotation | Fine-Grained Password Policies: 90 days (users), 60 days (admins) |
+| Account expiration | All accounts expire 1 year after creation |
 | First-logon change | All accounts forced to change password at first connection |
 
 ---
@@ -90,13 +91,13 @@ FirstName, LastName, Username, Department, Title, Role, OU, EmailDomain
 2. Create infra        -- Ensures "Administrateur" OU, admin group,
                           standard users group all exist
 3. Password policies   -- Creates two Fine-Grained Password Policies:
-                            PSO-StandardUsers-365Days  (12 months, min 12 chars)
-                            PSO-Admins-182Days         (6 months,  min 18 chars)
+                            PSO-StandardUsers-90Days   (90 days,  min 12 chars)
+                            PSO-Admins-60Days          (60 days,  min 18 chars)
 4. Per-user loop:
      a. Duplicate check (skip if exists)
      b. Auto-create OU tree if missing
      c. Generate secure random password (12 or 18 chars)
-     d. Create AD user (enabled, must change password at first logon)
+     d. Create AD user (enabled, must change password, expires in 1 year)
      e. Add to role-appropriate group (triggers password policy)
 5. Export              -- Writes USER_logins.txt with all credentials
 6. Cleanup             -- Clears passwords from memory, prints summary
@@ -110,14 +111,18 @@ The script creates two Password Settings Objects (PSOs):
 
 | Policy Name | Applies To | Max Age | Min Length | Precedence |
 |-------------|-----------|---------|------------|------------|
-| PSO-StandardUsers-365Days | Standard Users group | 365 days | 12 chars | 20 |
-| PSO-Admins-182Days | IT Admins group | 182 days | 18 chars | 10 |
+| PSO-StandardUsers-90Days | Standard Users group | 90 days | 12 chars | 20 |
+| PSO-Admins-60Days | IT Admins group | 60 days | 18 chars | 10 |
 
 Both policies also enforce:
 - Complexity enabled (uppercase, lowercase, digit, symbol)
 - 12 passwords remembered (history)
 - Lockout after 5 failed attempts (30 min)
 - Minimum password age of 1 day (prevents rapid cycling)
+
+Additionally, all accounts (both users and admins) have their
+`AccountExpirationDate` set to **1 year** from the creation date.
+After that date the account is automatically disabled by AD.
 
 ---
 

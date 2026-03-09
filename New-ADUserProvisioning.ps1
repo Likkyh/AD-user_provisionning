@@ -9,7 +9,8 @@
       - Admin accounts are always placed in the "Administrateur" OU
       - Secure random password generation (12 chars for users, 18 for admins)
       - Credentials export to a login file (USER_logins.txt)
-      - Fine-Grained Password Policies for rotation (12 months / 6 months)
+      - Fine-Grained Password Policies for rotation (90 days users / 60 days admins)
+      - Account expiration set to 1 year from creation date
       - Mandatory password change at first logon
 
 .PARAMETER CsvPath
@@ -436,13 +437,13 @@ catch [Microsoft.ActiveDirectory.Management.ADIdentityNotFoundException] {
 # 8. Setup Fine-Grained Password Policies -------------------------------------
 Write-Log "Configuring password rotation policies..." "INFO"
 
-# Users: password expires every 365 days (12 months), min length 12.
-Ensure-PasswordPolicy -PolicyName "PSO-StandardUsers-365Days" `
-    -MaxAgeDays 365 -Precedence 20 -TargetGroup $standardUsersGroup -MinLength 12
+# Users: password expires every 90 days, min length 12.
+Ensure-PasswordPolicy -PolicyName "PSO-StandardUsers-90Days" `
+    -MaxAgeDays 90 -Precedence 20 -TargetGroup $standardUsersGroup -MinLength 12
 
-# Admins: password expires every 182 days (~6 months), min length 18.
-Ensure-PasswordPolicy -PolicyName "PSO-Admins-182Days" `
-    -MaxAgeDays 182 -Precedence 10 -TargetGroup $AdminGroup -MinLength 18
+# Admins: password expires every 60 days, min length 18.
+Ensure-PasswordPolicy -PolicyName "PSO-Admins-60Days" `
+    -MaxAgeDays 60 -Precedence 10 -TargetGroup $AdminGroup -MinLength 18
 
 # ---------------------------------------------
 # REGION: User Creation Loop
@@ -511,6 +512,9 @@ foreach ($user in $users) {
     $plainPassword  = New-SecurePassword -Length $pwdLength
     $securePassword = ConvertTo-SecureString -String $plainPassword -AsPlainText -Force
 
+    # -- Compute account expiration (1 year from today) --------------------------
+    $accountExpiration = (Get-Date).AddYears(1)
+
     # -- Build user creation parameters ----------------------------------------
     $newUserParams = @{
         SamAccountName        = $sam
@@ -524,8 +528,9 @@ foreach ($user in $users) {
         Title                 = $title
         Path                  = $targetOU
         AccountPassword       = $securePassword
+        AccountExpirationDate = $accountExpiration    # Account disabled after 1 year
         Enabled               = $true
-        ChangePasswordAtLogon = $true       # Forces password change at first logon
+        ChangePasswordAtLogon = $true                 # Forces password change at first logon
         PassThru              = $true
     }
 
@@ -540,17 +545,18 @@ foreach ($user in $users) {
     try {
         if ($PSCmdlet.ShouldProcess($sam, "Create AD user in $targetOU")) {
             $createdUser = New-ADUser @newUserParams -ErrorAction Stop
-            Write-Log "  CREATED: '$sam' provisioned in '$targetOU'." "SUCCESS"
+            Write-Log "  CREATED: '$sam' provisioned in '$targetOU' (account expires $($accountExpiration.ToString('yyyy-MM-dd')))." "SUCCESS"
             $script:Stats.Created++
 
             # Record credentials for the logins export file.
             [void]$script:LoginRecords.Add([PSCustomObject]@{
-                Username    = $sam
-                DisplayName = $display
-                Role        = $role
-                Password    = $plainPassword
-                MustChange  = "Yes (first logon)"
-                ExpiresIn   = if ($isAdmin) { "6 months" } else { "12 months" }
+                Username       = $sam
+                DisplayName    = $display
+                Role           = $role
+                Password       = $plainPassword
+                MustChange     = "Yes (first logon)"
+                PwdRotation    = if ($isAdmin) { "60 days" } else { "90 days" }
+                AccountExpires = $accountExpiration.ToString("yyyy-MM-dd")
             })
         }
         else {
@@ -569,7 +575,7 @@ foreach ($user in $users) {
     if ($isAdmin) {
         try {
             Add-ADGroupMember -Identity $AdminGroup -Members $sam -ErrorAction Stop
-            Write-Log "  -> Added to admin group '$AdminGroup' (6-month password rotation)." "SUCCESS"
+            Write-Log "  -> Added to admin group '$AdminGroup' (60-day password rotation)." "SUCCESS"
             $script:Stats.Admins++
         }
         catch {
@@ -579,7 +585,7 @@ foreach ($user in $users) {
     else {
         try {
             Add-ADGroupMember -Identity $standardUsersGroup -Members $sam -ErrorAction Stop
-            Write-Log "  -> Added to group '$standardUsersGroup' (12-month password rotation)." "INFO"
+            Write-Log "  -> Added to group '$standardUsersGroup' (90-day password rotation)." "INFO"
         }
         catch {
             Write-Log "  WARNING: Could not add '$sam' to '$standardUsersGroup': $_" "WARN"
@@ -612,12 +618,13 @@ if ($script:LoginRecords.Count -gt 0) {
 
         # Append each user record.
         foreach ($record in $script:LoginRecords) {
-            [void]$lines.Add("  Username     : $($record.Username)")
-            [void]$lines.Add("  Full Name    : $($record.DisplayName)")
-            [void]$lines.Add("  Role         : $($record.Role)")
-            [void]$lines.Add("  Password     : $($record.Password)")
-            [void]$lines.Add("  Must Change  : $($record.MustChange)")
-            [void]$lines.Add("  Pwd Rotation : $($record.ExpiresIn)")
+            [void]$lines.Add("  Username       : $($record.Username)")
+            [void]$lines.Add("  Full Name      : $($record.DisplayName)")
+            [void]$lines.Add("  Role           : $($record.Role)")
+            [void]$lines.Add("  Password       : $($record.Password)")
+            [void]$lines.Add("  Must Change    : $($record.MustChange)")
+            [void]$lines.Add("  Pwd Rotation   : $($record.PwdRotation)")
+            [void]$lines.Add("  Account Expires: $($record.AccountExpires)")
             [void]$lines.Add("  $thinSep")
         }
 
