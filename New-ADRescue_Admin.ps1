@@ -17,7 +17,7 @@ $SecurePassword = ConvertTo-SecureString $passStr -AsPlainText -Force
 # 5. Create the local user account (FIXED: removed the $true variable)
 New-LocalUser -Name "RescueAdmin" -Password $SecurePassword -FullName "Rescue SuperAdmin" -Description "Emergency local administrator account" -PasswordNeverExpires
 
-# 6. Add the new user to the local Administrators group (FIXED: localized to French)
-Add-LocalGroupMember -Group "Administrateurs" -Member "RescueAdmin"
+# 6. Add the new user to the local Administrators group
+Add-LocalGroupMember -Group "Administrateur" -Member "RescueAdmin"
 
 Write-Host "RescueAdmin account successfully created and added to Administrateurs group." -ForegroundColor Yellow
