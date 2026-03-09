@@ -122,7 +122,7 @@ function New-SecurePassword {
     $uppercase = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
     $lowercase = "abcdefghijklmnopqrstuvwxyz"
     $digits    = "0123456789"
-    $symbols   = "!@#$%^&*()-_=+[]{}|;:,.<>?"
+    $symbols   = '!@#$%^&*()-_=+[]{}|;:,.<>?'
     $allChars  = $uppercase + $lowercase + $digits + $symbols
 
     # Use .NET cryptographic RNG for secure randomness.

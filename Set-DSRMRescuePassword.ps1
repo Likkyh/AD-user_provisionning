@@ -119,6 +119,7 @@ function New-NonAmbiguousPassword {
           Uppercase : A C E F H J K L M N P Q R T U V W X Y
           Lowercase : a c d e f h i j k m n p r t u v w x y
           Digits    : 2 3 4 5 6 7 8 9
+          Symbols   : ! # $ % & * + = ? @
     #>
     param (
         [Parameter(Mandatory)]
@@ -129,7 +130,8 @@ function New-NonAmbiguousPassword {
     $uppercase = "ACEFHJKLMNPQRTUVWXY"
     $lowercase = "acdefhijkmnprtuvwxy"
     $digits    = "23456789"
-    $allChars  = $uppercase + $lowercase + $digits
+    $symbols   = '!#$%&*+=?@'
+    $allChars  = $uppercase + $lowercase + $digits + $symbols
 
     $rng = [System.Security.Cryptography.RNGCryptoServiceProvider]::new()
 
@@ -139,10 +141,12 @@ function New-NonAmbiguousPassword {
         return $CharSet[$byte[0] % $CharSet.Length]
     }
 
+    # Guarantee at least one character from each of the 4 categories.
     $mandatory = @(
         (Get-RandomChar $uppercase),
         (Get-RandomChar $lowercase),
-        (Get-RandomChar $digits)
+        (Get-RandomChar $digits),
+        (Get-RandomChar $symbols)
     )
 
     $remaining = $Length - $mandatory.Count

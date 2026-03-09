@@ -241,6 +241,7 @@ under pressure are excluded:
 | Uppercase | A C E F H J K L M N P Q R T U V W X Y | O (vs 0), I (vs 1/l), B (vs 8), S (vs 5), Z (vs 2), G (vs 6), D (vs 0) |
 | Lowercase | a c d e f h i j k m n p r t u v w x y | o (vs 0), l (vs 1/I), b (vs 6), s (vs 5), z (vs 2), g (vs 9), q (vs 9) |
 | Digits | 2 3 4 5 6 7 8 9 | 0 (vs O), 1 (vs l/I) |
+| Symbols | ! # $ % & * + = ? @ | None excluded (all are unambiguous) |
 
 The credential sheet prints the password twice: once as a raw string,
 once split into **groups of 4** for easier reading.
