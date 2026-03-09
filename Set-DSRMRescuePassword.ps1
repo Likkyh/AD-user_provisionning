@@ -34,7 +34,10 @@
     This script:
       - Verifies it is running on a Domain Controller
       - Generates a 24-character non-ambiguous password
-      - Resets the DSRM password via ntdsutil
+      - Creates a temporary AD user with that password
+      - Syncs the DSRM password from that account via ntdsutil
+        (using "sync from domain account" -- no interactive prompt)
+      - Deletes the temporary account
       - Optionally configures DsrmAdminLogonBehavior for AD DS-stopped logon
       - Writes a printable credential sheet for sealed-envelope storage
 
@@ -202,58 +205,74 @@ if (-not $ntdsutil) {
 Write-Status "ntdsutil.exe found: $($ntdsutil.Source)" "OK"
 
 # ---------------------------------------------
-# REGION: Generate Password
+# REGION: Generate Password & Set via Domain Account Sync
 # ---------------------------------------------
 
-$plainPassword = New-NonAmbiguousPassword -Length 24
+# STRATEGY: ntdsutil's interactive "reset password on server null" is
+# notoriously unreliable when scripted (stdin buffering, encoding, and
+# special-character issues). Microsoft's recommended scripted approach is:
+#
+#   1. Create a temporary AD user with a known password
+#   2. Run: ntdsutil "set dsrm password" "sync from domain account <user>" q q
+#   3. Delete the temporary user
+#
+# The "sync from domain account" command copies the password hash directly
+# from the domain account to the DSRM SAM. It requires NO interactive
+# password prompt, making it 100% reliable in scripts.
+
+$plainPassword  = New-NonAmbiguousPassword -Length 24
+$securePassword = ConvertTo-SecureString -String $plainPassword -AsPlainText -Force
 Write-Status "24-character non-ambiguous password generated." "OK"
 
-# ---------------------------------------------
-# REGION: Reset DSRM Password via ntdsutil
-# ---------------------------------------------
+# Temporary account name (unlikely to collide, cleaned up at the end).
+$tempAccountName = "DSRMTempSync_$(Get-Date -Format 'yyyyMMddHHmmss')"
 
-Write-Status "Resetting DSRM password via ntdsutil..." "INFO"
-
-# ntdsutil is interactive. We write commands to a temp file and redirect it
-# via cmd.exe so that:
-#   - The password never appears in command-line arguments (audit-safe)
-#   - Each line is consumed in order without race conditions
-#   - It works regardless of OS language (commands are always English)
-
-$tempFile = $null
+# 4. Create the temporary domain account with our generated password.
+Write-Status "Creating temporary sync account '$tempAccountName'..." "INFO"
 try {
-    # Build the ntdsutil command sequence in a temp file.
-    $tempFile = [System.IO.Path]::GetTempFileName()
-    $ntdsCommands = @(
-        "set dsrm password"
-        "reset password on server null"
-        $plainPassword
-        $plainPassword
+    New-ADUser -Name $tempAccountName `
+        -SamAccountName $tempAccountName `
+        -UserPrincipalName "$tempAccountName@$((Get-ADDomain).DNSRoot)" `
+        -AccountPassword $securePassword `
+        -Enabled $true `
+        -ChangePasswordAtLogon $false `
+        -Description "Temporary account for DSRM password sync -- safe to delete" `
+        -Path ((Get-ADDomain).UsersContainer) `
+        -ErrorAction Stop
+    Write-Status "Temporary account created." "OK"
+}
+catch {
+    Write-Status "FAILED to create temporary sync account: $_" "ERROR"
+    exit 1
+}
+
+# 5. Sync the DSRM password from the temporary domain account.
+Write-Status "Syncing DSRM password from temporary account via ntdsutil..." "INFO"
+try {
+    $ntdsArgs = @(
+        "`"set dsrm password`""
+        "`"sync from domain account $tempAccountName`""
         "q"
         "q"
     )
-    # Write with ASCII encoding -- ntdsutil does not handle UTF-8 BOM.
-    [System.IO.File]::WriteAllLines($tempFile, $ntdsCommands,
-        [System.Text.Encoding]::ASCII)
-
-    # Feed the file via cmd input redirection.
-    $result = cmd.exe /c "ntdsutil.exe < `"$tempFile`" 2>&1"
+    $result = & cmd.exe /c "ntdsutil.exe $($ntdsArgs -join ' ') 2>&1"
     $exitCode = $LASTEXITCODE
 
-    # Display ntdsutil output for diagnostics.
+    # Display ntdsutil output.
     $outputLines = @($result) | Where-Object { $_.Trim() -ne "" }
     foreach ($line in $outputLines) {
         Write-Status "  ntdsutil> $line" "INFO"
     }
 
-    # Check for success in output (handles English, French, German).
+    # Check for success (handles English, French, German).
     $fullOutput = ($result | Out-String)
     if ($fullOutput -match "successfully|correctement|erfolgreich|avec succ") {
-        Write-Status "DSRM password reset successfully." "OK"
+        Write-Status "DSRM password synced successfully." "OK"
     }
-    elseif ($fullOutput -match "echou|failed|error|erreur|fehlgeschlagen") {
+    elseif ($fullOutput -match "echou|failed|fehlgeschlagen") {
         Write-Status "ntdsutil reported a failure. Review the output above." "ERROR"
-        Write-Status "Common causes: password complexity not met, or AD DS issue." "WARN"
+        # Cleanup before exiting.
+        Remove-ADUser -Identity $tempAccountName -Confirm:$false -ErrorAction SilentlyContinue
         exit 1
     }
     elseif ($exitCode -eq 0) {
@@ -261,20 +280,25 @@ try {
     }
     else {
         Write-Status "ntdsutil exited with code $exitCode." "ERROR"
+        Remove-ADUser -Identity $tempAccountName -Confirm:$false -ErrorAction SilentlyContinue
         exit 1
     }
 }
 catch {
     Write-Status "FAILED to run ntdsutil: $_" "ERROR"
+    Remove-ADUser -Identity $tempAccountName -Confirm:$false -ErrorAction SilentlyContinue
     exit 1
 }
-finally {
-    # Overwrite the temp file with zeros before deleting (contains password).
-    if ($tempFile -and (Test-Path $tempFile)) {
-        $size = (Get-Item $tempFile).Length
-        [System.IO.File]::WriteAllBytes($tempFile, [byte[]]::new($size))
-        Remove-Item -Path $tempFile -Force -ErrorAction SilentlyContinue
-    }
+
+# 6. Delete the temporary domain account immediately.
+Write-Status "Removing temporary sync account '$tempAccountName'..." "INFO"
+try {
+    Remove-ADUser -Identity $tempAccountName -Confirm:$false -ErrorAction Stop
+    Write-Status "Temporary account deleted." "OK"
+}
+catch {
+    Write-Status "WARNING: Could not delete '$tempAccountName'. Remove it manually!" "WARN"
+    Write-Status "  Run: Remove-ADUser -Identity '$tempAccountName' -Confirm:`$false" "WARN"
 }
 
 # ---------------------------------------------
@@ -419,6 +443,7 @@ catch {
 # Clear sensitive data from memory.
 $plainPassword  = $null
 $pwdGrouped     = $null
+$securePassword = $null
 $sheet          = $null
 
 # ---------------------------------------------

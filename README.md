@@ -254,11 +254,12 @@ once split into **groups of 4** for easier reading.
 
 1. Verifies the machine is a DC and the prompt is elevated
 2. Generates a 24-character non-ambiguous password
-3. Resets the DSRM password via `ntdsutil` (stdin redirect -- password
-   never appears in command-line arguments or process audit logs)
-4. Optionally sets `DsrmAdminLogonBehavior = 2` so DSRM logon also
-   works when the AD DS service is stopped (not just at boot)
-5. Writes `DSRM_[HOSTNAME]_rescue.txt` in `Rescue credentials/`
+3. Creates a temporary AD user with that password
+4. Runs `ntdsutil "set dsrm password" "sync from domain account <temp>" q q`
+   to copy the password hash to DSRM (no interactive prompt needed)
+5. Deletes the temporary AD user immediately
+6. Optionally sets `DsrmAdminLogonBehavior = 2` for AD DS-stopped logon
+7. Writes `DSRM_[HOSTNAME]_rescue.txt` in `Rescue credentials/`
 
 ### Usage
 
