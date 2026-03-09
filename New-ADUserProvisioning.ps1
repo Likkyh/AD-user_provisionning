@@ -24,7 +24,7 @@
     If omitted, the operator is prompted securely at runtime.
 
 .PARAMETER WhatIf
-    Enables simulation mode — logs intended actions without making AD changes.
+    Enables simulation mode -- logs intended actions without making AD changes.
 
 .EXAMPLE
     .\New-ADUserProvisioning.ps1 -CsvPath ".\AD_Users.csv"
@@ -32,7 +32,7 @@
 
 .NOTES
     Author  : Systems Administration Team
-    Version : 2.0
+    Version : 2.1
     Requires: ActiveDirectory PowerShell module, domain-joined machine,
               account with delegated OU + group-management rights.
 #>
@@ -52,9 +52,9 @@ param (
     [string]$DefaultPasswordPath
 )
 
-# ─────────────────────────────────────────────
+# ---------------------------------------------
 # REGION: Initialisation & Helpers
-# ─────────────────────────────────────────────
+# ---------------------------------------------
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
@@ -97,9 +97,9 @@ $script:Stats = @{
     Admins   = 0
 }
 
-# ─────────────────────────────────────────────
+# ---------------------------------------------
 # REGION: Pre-flight Checks
-# ─────────────────────────────────────────────
+# ---------------------------------------------
 
 Write-Log "===== AD User Provisioning Script Started =====" "INFO"
 Write-Log "Log file  : $LogPath" "INFO"
@@ -149,7 +149,7 @@ foreach ($col in $requiredColumns) {
     }
 }
 
-Write-Log "CSV validated — $($users.Count) record(s) found." "INFO"
+Write-Log "CSV validated -- $($users.Count) record(s) found." "INFO"
 
 # 4. Obtain the default password securely --------------------------------------
 if ($DefaultPasswordPath) {
@@ -164,7 +164,7 @@ if ($DefaultPasswordPath) {
     Write-Log "Default password loaded from file." "INFO"
 }
 else {
-    # Prompt the operator interactively — nothing is echoed to screen.
+    # Prompt the operator interactively -- nothing is echoed to screen.
     $securePassword = Read-Host -Prompt "Enter the default password for new accounts" -AsSecureString
     Write-Log "Default password obtained from operator prompt." "INFO"
 }
@@ -179,9 +179,9 @@ catch {
     exit 1
 }
 
-# ─────────────────────────────────────────────
+# ---------------------------------------------
 # REGION: User Creation Loop
-# ─────────────────────────────────────────────
+# ---------------------------------------------
 
 Write-Log "Beginning user provisioning..." "INFO"
 Write-Log ("-" * 60) "INFO"
@@ -200,33 +200,33 @@ foreach ($user in $users) {
 
     Write-Log "Processing: $display ($sam) | Role: $role | OU: $targetOU" "INFO"
 
-    # ── Duplicate check ──────────────────────────────────────────────────────
+    # -- Duplicate check -------------------------------------------------------
     try {
         $existingUser = Get-ADUser -Filter "SamAccountName -eq '$sam'" -ErrorAction Stop
     }
     catch {
-        # Filter query failed — treat as non-blocking but log it.
-        Write-Log "  Warning — could not query AD for '$sam': $_" "WARN"
+        # Filter query failed -- treat as non-blocking but log it.
+        Write-Log "  Warning: could not query AD for '$sam': $_" "WARN"
         $existingUser = $null
     }
 
     if ($existingUser) {
-        Write-Log "  SKIPPED — '$sam' already exists (DN: $($existingUser.DistinguishedName))." "WARN"
+        Write-Log "  SKIPPED: '$sam' already exists (DN: $($existingUser.DistinguishedName))." "WARN"
         $script:Stats.Skipped++
         continue
     }
 
-    # ── Verify target OU exists ──────────────────────────────────────────────
+    # -- Verify target OU exists -----------------------------------------------
     try {
         Get-ADOrganizationalUnit -Identity $targetOU -ErrorAction Stop | Out-Null
     }
     catch {
-        Write-Log "  FAILED — Target OU '$targetOU' does not exist. Skipping '$sam'." "ERROR"
+        Write-Log "  FAILED: Target OU '$targetOU' does not exist. Skipping '$sam'." "ERROR"
         $script:Stats.Failed++
         continue
     }
 
-    # ── Create the user account ──────────────────────────────────────────────
+    # -- Create the user account -----------------------------------------------
     $newUserParams = @{
         SamAccountName        = $sam
         UserPrincipalName     = $upn
@@ -246,47 +246,47 @@ foreach ($user in $users) {
 
     # Description distinguishes admin accounts at a glance.
     if ($role -eq "Admin") {
-        $newUserParams["Description"] = "Administrator account — $title"
+        $newUserParams["Description"] = "Administrator account - $title"
     }
     else {
-        $newUserParams["Description"] = "$title — $department"
+        $newUserParams["Description"] = "$title - $department"
     }
 
     try {
         if ($PSCmdlet.ShouldProcess($sam, "Create AD user in $targetOU")) {
             $createdUser = New-ADUser @newUserParams -ErrorAction Stop
-            Write-Log "  CREATED — '$sam' provisioned in '$targetOU'." "SUCCESS"
+            Write-Log "  CREATED: '$sam' provisioned in '$targetOU'." "SUCCESS"
             $script:Stats.Created++
         }
         else {
-            # WhatIf mode — count but don't execute.
-            Write-Log "  WHATIF — Would create '$sam' in '$targetOU'." "INFO"
+            # WhatIf mode -- count but don't execute.
+            Write-Log "  WHATIF: Would create '$sam' in '$targetOU'." "INFO"
             $script:Stats.Created++
             continue   # Skip group logic when simulating.
         }
     }
     catch {
-        Write-Log "  FAILED — Could not create '$sam': $_" "ERROR"
+        Write-Log "  FAILED: Could not create '$sam': $_" "ERROR"
         $script:Stats.Failed++
         continue
     }
 
-    # ── Admin group membership ───────────────────────────────────────────────
+    # -- Admin group membership ------------------------------------------------
     if ($role -eq "Admin") {
         try {
             Add-ADGroupMember -Identity $AdminGroup -Members $sam -ErrorAction Stop
-            Write-Log "  ADMIN — '$sam' added to '$AdminGroup'." "SUCCESS"
+            Write-Log "  ADMIN: '$sam' added to '$AdminGroup'." "SUCCESS"
             $script:Stats.Admins++
         }
         catch {
-            Write-Log "  WARNING — '$sam' created but could NOT be added to '$AdminGroup': $_" "WARN"
+            Write-Log "  WARNING: '$sam' created but could NOT be added to '$AdminGroup': $_" "WARN"
         }
     }
 }
 
-# ─────────────────────────────────────────────
+# ---------------------------------------------
 # REGION: Summary Report
-# ─────────────────────────────────────────────
+# ---------------------------------------------
 
 Write-Log ("-" * 60) "INFO"
 Write-Log "===== Provisioning Complete =====" "INFO"
