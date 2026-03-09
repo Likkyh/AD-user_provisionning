@@ -6,7 +6,7 @@
 |------|---------|
 | `New-ADUserProvisioning.ps1` | Main provisioning script |
 | `AD_Users_Sample.csv` | Sample CSV -- copy and edit with real data |
-| `USER_logins.txt` | Generated at runtime -- contains initial credentials |
+| `Created logins/` | Generated at runtime -- one `[USERNAME]_login.txt` per person |
 
 ---
 
@@ -17,7 +17,7 @@
 | Auto OU creation | Missing OUs are created automatically (full tree) |
 | Admin OU override | All Admin-role users go to `OU=Administrateur` regardless of CSV |
 | Password generation | 12-char for users, 18-char for admins (uppercase + symbol + digit) |
-| Credentials file | `USER_logins.txt` created with all initial passwords |
+| Credentials files | One `[USERNAME]_login.txt` per person in `Created logins/` directory |
 | Password rotation | Fine-Grained Password Policies: 90 days (users), 60 days (admins) |
 | Account expiration | All accounts expire 1 year after creation |
 | First-logon change | All accounts forced to change password at first connection |
@@ -79,7 +79,7 @@ FirstName, LastName, Username, Department, Title, Role, OU, EmailDomain
 ```powershell
 .\New-ADUserProvisioning.ps1 -CsvPath ".\AD_Users.csv" `
     -LogPath "C:\Logs\provisioning.log" `
-    -LoginsOutputPath "C:\Secure\USER_logins.txt"
+    -LoginsOutputDir "C:\Secure\Created logins"
 ```
 
 ---
@@ -99,7 +99,8 @@ FirstName, LastName, Username, Department, Title, Role, OU, EmailDomain
      c. Generate secure random password (12 or 18 chars)
      d. Create AD user (enabled, must change password, expires in 1 year)
      e. Add to role-appropriate group (triggers password policy)
-5. Export              -- Writes USER_logins.txt with all credentials
+5. Export              -- Writes one [USERNAME]_login.txt per person
+                          in the "Created logins" directory
 6. Cleanup             -- Clears passwords from memory, prints summary
 ```
 
@@ -126,11 +127,31 @@ After that date the account is automatically disabled by AD.
 
 ---
 
+## Credentials File Structure
+
+The script creates a `Created logins/` directory containing one file per
+person. Each file is named after their primary username:
+
+```
+Created logins/
+    ajohnson_login.txt
+    bmartinez_login.txt
+    dchen_login.txt
+    ...
+```
+
+If a person has both a User and an Admin account in the CSV (same full
+name), both sets of credentials appear in a single file. This makes it
+easy to hand each person one file containing everything they need.
+
+---
+
 ## Security Reminders
 
-- `USER_logins.txt` contains **plaintext passwords** -- distribute it through
-  a secure channel (encrypted email, sealed envelope), then **delete the file**.
-- Restrict NTFS ACLs on the output directory to administrators only.
+- The `Created logins/` directory contains **plaintext passwords** -- distribute
+  each file individually to the corresponding person via a secure channel
+  (encrypted email, sealed envelope), then **delete the entire directory**.
+- Restrict NTFS ACLs on the `Created logins/` directory to administrators only.
 - All accounts are forced to change their password at first logon.
 - Passwords are cleared from script memory after the file is written.
 - Run the script from a privileged admin workstation, not a shared machine.
@@ -145,4 +166,4 @@ After that date the account is automatically disabled by AD.
   `Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned`
 - Clean up test accounts:
   `Get-ADUser -SearchBase "OU=TestOU,DC=contoso,DC=com" -Filter * | Remove-ADUser -Confirm:$false`
-- Check both the log file and USER_logins.txt after each run.
+- Check both the log file and the `Created logins/` directory after each run.

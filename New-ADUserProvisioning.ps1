@@ -8,7 +8,7 @@
       - Automatic OU creation when target OUs do not exist
       - Admin accounts are always placed in the "Administrateur" OU
       - Secure random password generation (12 chars for users, 18 for admins)
-      - Credentials export to a login file (USER_logins.txt)
+      - Per-user credentials export ([USERNAME]_login.txt) in a "Created logins" directory
       - Fine-Grained Password Policies for rotation (90 days users / 60 days admins)
       - Account expiration set to 1 year from creation date
       - Mandatory password change at first logon
@@ -24,9 +24,11 @@
     Security group to which Admin-role users are added.
     Defaults to "IT Admins".
 
-.PARAMETER LoginsOutputPath
-    Path to the credentials export file.
-    Defaults to USER_logins.txt in the script's directory.
+.PARAMETER LoginsOutputDir
+    Path to the directory where per-user credential files are written.
+    Each file is named [USERNAME]_login.txt.
+    Defaults to "Created logins" in the script's directory.
+    The directory is created automatically if it does not exist.
 
 .PARAMETER WhatIf
     Enables simulation mode -- logs intended actions without making AD changes.
@@ -55,7 +57,7 @@ param (
     [string]$AdminGroup = "IT Admins",
 
     [Parameter(Mandatory = $false)]
-    [string]$LoginsOutputPath
+    [string]$LoginsOutputDir
 )
 
 # ---------------------------------------------
@@ -70,8 +72,13 @@ if (-not $LogPath) {
     $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
     $LogPath   = Join-Path $PSScriptRoot "AD_Provisioning_$timestamp.log"
 }
-if (-not $LoginsOutputPath) {
-    $LoginsOutputPath = Join-Path $PSScriptRoot "USER_logins.txt"
+if (-not $LoginsOutputDir) {
+    $LoginsOutputDir = Join-Path $PSScriptRoot "Created logins"
+}
+
+# Create the logins output directory if it does not exist.
+if (-not (Test-Path -Path $LoginsOutputDir -PathType Container)) {
+    New-Item -Path $LoginsOutputDir -ItemType Directory -Force | Out-Null
 }
 
 function Write-Log {
@@ -306,7 +313,7 @@ $script:Stats = @{
     OUCreated = 0
 }
 
-# Collects login records for the credentials file.
+# Collects login records for the per-user credential files.
 $script:LoginRecords = [System.Collections.ArrayList]::new()
 
 # ---------------------------------------------
@@ -316,7 +323,7 @@ $script:LoginRecords = [System.Collections.ArrayList]::new()
 Write-Log "===== AD User Provisioning Script v3.0 Started =====" "INFO"
 Write-Log "Log file      : $LogPath" "INFO"
 Write-Log "CSV source    : $CsvPath" "INFO"
-Write-Log "Logins output : $LoginsOutputPath" "INFO"
+Write-Log "Logins dir    : $LoginsOutputDir" "INFO"
 
 # 1. ActiveDirectory module ----------------------------------------------------
 Write-Log "Checking for the ActiveDirectory PowerShell module..." "INFO"
@@ -594,51 +601,68 @@ foreach ($user in $users) {
 }
 
 # ---------------------------------------------
-# REGION: Export Credentials File
+# REGION: Export Per-User Credentials Files
 # ---------------------------------------------
 
 if ($script:LoginRecords.Count -gt 0) {
-    Write-Log "Writing credentials to '$LoginsOutputPath'..." "INFO"
+    Write-Log "Writing per-user credential files to '$LoginsOutputDir'..." "INFO"
 
-    try {
-        # Build the header.
-        $separator = "=" * 64
-        $thinSep   = "-" * 40
-        $lines     = [System.Collections.ArrayList]::new()
+    # Ensure the output directory exists (may have been removed since pre-flight).
+    if (-not (Test-Path -Path $LoginsOutputDir -PathType Container)) {
+        New-Item -Path $LoginsOutputDir -ItemType Directory -Force | Out-Null
+    }
 
-        [void]$lines.Add($separator)
-        [void]$lines.Add("  CONFIDENTIAL -- AD USER CREDENTIALS")
-        [void]$lines.Add("  Generated : $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')")
-        [void]$lines.Add("  Accounts  : $($script:LoginRecords.Count)")
-        [void]$lines.Add($separator)
-        [void]$lines.Add("  WARNING: This file contains plaintext passwords.")
-        [void]$lines.Add("  Distribute securely, then DELETE this file immediately.")
-        [void]$lines.Add($separator)
-        [void]$lines.Add("")
+    $separator = "=" * 56
+    $thinSep   = "-" * 40
+    $filesWritten = 0
 
-        # Append each user record.
-        foreach ($record in $script:LoginRecords) {
-            [void]$lines.Add("  Username       : $($record.Username)")
-            [void]$lines.Add("  Full Name      : $($record.DisplayName)")
-            [void]$lines.Add("  Role           : $($record.Role)")
-            [void]$lines.Add("  Password       : $($record.Password)")
-            [void]$lines.Add("  Must Change    : $($record.MustChange)")
-            [void]$lines.Add("  Pwd Rotation   : $($record.PwdRotation)")
-            [void]$lines.Add("  Account Expires: $($record.AccountExpires)")
-            [void]$lines.Add("  $thinSep")
+    # Group records by DisplayName so that a person with both a User and
+    # an Admin account gets a single file containing both sets of credentials.
+    $grouped = $script:LoginRecords | Group-Object -Property DisplayName
+
+    foreach ($group in $grouped) {
+        # Use the first record's username for the file name.
+        $primaryUsername = $group.Group[0].Username
+        $fileName  = "${primaryUsername}_login.txt"
+        $filePath  = Join-Path $LoginsOutputDir $fileName
+
+        try {
+            $lines = [System.Collections.ArrayList]::new()
+
+            [void]$lines.Add($separator)
+            [void]$lines.Add("  CONFIDENTIAL -- LOGIN CREDENTIALS")
+            [void]$lines.Add("  For        : $($group.Name)")
+            [void]$lines.Add("  Generated  : $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')")
+            [void]$lines.Add($separator)
+            [void]$lines.Add("  WARNING: This file contains plaintext passwords.")
+            [void]$lines.Add("  Store securely, then DELETE after first use.")
+            [void]$lines.Add($separator)
+            [void]$lines.Add("")
+
+            foreach ($record in $group.Group) {
+                [void]$lines.Add("  Account Type     : $($record.Role)")
+                [void]$lines.Add("  Username         : $($record.Username)")
+                [void]$lines.Add("  Password         : $($record.Password)")
+                [void]$lines.Add("  Must Change      : $($record.MustChange)")
+                [void]$lines.Add("  Pwd Rotation     : $($record.PwdRotation)")
+                [void]$lines.Add("  Account Expires  : $($record.AccountExpires)")
+                [void]$lines.Add("  $thinSep")
+            }
+
+            Set-Content -Path $filePath -Value ($lines -join "`r`n") -Encoding UTF8 -ErrorAction Stop
+            Write-Log "  File created: $fileName ($($group.Group.Count) account(s))" "SUCCESS"
+            $filesWritten++
         }
-
-        Set-Content -Path $LoginsOutputPath -Value ($lines -join "`r`n") -Encoding UTF8 -ErrorAction Stop
-
-        Write-Log "Credentials file written successfully." "SUCCESS"
-        Write-Log ">> SECURITY: Distribute USER_logins.txt securely, then DELETE it. <<" "WARN"
+        catch {
+            Write-Log "  FAILED to write '$fileName': $_" "ERROR"
+        }
     }
-    catch {
-        Write-Log "FAILED to write credentials file: $_" "ERROR"
-    }
+
+    Write-Log "$filesWritten credential file(s) written to '$LoginsOutputDir'." "SUCCESS"
+    Write-Log ">> SECURITY: Distribute these files securely, then DELETE the entire directory. <<" "WARN"
 }
 else {
-    Write-Log "No new accounts created -- credentials file not generated." "WARN"
+    Write-Log "No new accounts created -- no credential files generated." "WARN"
 }
 
 # Securely clear passwords from memory.
@@ -658,6 +682,6 @@ Write-Log "  Duplicates skipped: $($script:Stats.Skipped)" $(if ($script:Stats.S
 Write-Log "  Failures          : $($script:Stats.Failed)" $(if ($script:Stats.Failed -gt 0) { "ERROR" } else { "INFO" })
 Write-Log "  OUs created       : $($script:Stats.OUCreated)" "INFO"
 Write-Log "  Admin memberships : $($script:Stats.Admins)" "INFO"
-Write-Log "  Credentials file  : $LoginsOutputPath" "INFO"
+Write-Log "  Credentials dir   : $LoginsOutputDir" "INFO"
 Write-Log "  Log file          : $LogPath" "INFO"
 Write-Log "===== End =====" "INFO"
