@@ -1,0 +1,8 @@
+FirstName,LastName,Username,Department,Title,Role,OU,EmailDomain
+Alice,Johnson,ajohnson,Engineering,Software Engineer,User,OU=Engineering;OU=Users;DC=contoso;DC=com,contoso.com
+Bob,Martinez,bmartinez,Finance,Financial Analyst,User,OU=Finance;OU=Users;DC=contoso;DC=com,contoso.com
+Carol,Williams,cwilliams,Human Resources,HR Specialist,User,OU=HR;OU=Users;DC=contoso;DC=com,contoso.com
+David,Chen,dchen,IT,Systems Administrator,Admin,OU=IT;OU=Admins;DC=contoso;DC=com,contoso.com
+Eve,Okafor,eokafor,IT,Network Engineer,Admin,OU=IT;OU=Admins;DC=contoso;DC=com,contoso.com
+Frank,Kim,fkim,Sales,Account Executive,User,OU=Sales;OU=Users;DC=contoso;DC=com,contoso.com
+Grace,Dupont,gdupont,Engineering,DevOps Engineer,User,OU=Engineering;OU=Users;DC=contoso;DC=com,contoso.com
