@@ -4,9 +4,11 @@
 
 | File | Purpose |
 |------|---------|
-| `New-ADUserProvisioning.ps1` | Main provisioning script |
+| `New-ADUserProvisioning.ps1` | Main AD provisioning script |
+| `New-LocalRescueAdmin.ps1` | Local rescue administrator creation script |
 | `AD_Users_Sample.csv` | Sample CSV -- copy and edit with real data |
 | `Created logins/` | Generated at runtime -- one `[USERNAME]_login.txt` per person |
+| `Rescue credentials/` | Generated at runtime -- sealed-envelope credential sheet |
 
 ---
 
@@ -167,3 +169,67 @@ easy to hand each person one file containing everything they need.
 - Clean up test accounts:
   `Get-ADUser -SearchBase "OU=TestOU,DC=contoso,DC=com" -Filter * | Remove-ADUser -Confirm:$false`
 - Check both the log file and the `Created logins/` directory after each run.
+
+---
+---
+
+# Local Rescue Administrator Script
+
+## Purpose
+
+`New-LocalRescueAdmin.ps1` creates a break-glass **local** administrator
+account on a single machine. It is designed for emergency access when
+domain authentication is unavailable.
+
+## Password Design
+
+The password is 24 characters using only **non-ambiguous** characters to
+prevent misreading from a printed sheet under pressure:
+
+| Category | Included | Excluded (ambiguous) |
+|----------|----------|----------------------|
+| Uppercase | A C E F H J K L M N P Q R T U V W X Y | O (vs 0), I (vs 1/l), B (vs 8), S (vs 5), Z (vs 2), G (vs 6), D (vs 0) |
+| Lowercase | a c d e f h i j k m n p r t u v w x y | o (vs 0), l (vs 1/I), b (vs 6), s (vs 5), z (vs 2), g (vs 9), q (vs 9) |
+| Digits | 2 3 4 5 6 7 8 9 | 0 (vs O), 1 (vs l/I) |
+
+The credential sheet prints the password twice: once as a plain string,
+once split into groups of 4 characters for easier reading.
+
+## Account Properties
+
+| Property | Value |
+|----------|-------|
+| Password expires | NEVER |
+| Account expires | NEVER |
+| User may change password | NO |
+| Local Administrators group | YES (joined via SID, language-independent) |
+
+## Running the Script
+
+Must be run from an **elevated** PowerShell prompt on the target machine:
+
+```powershell
+# Default settings (account: rescue.admin)
+.\New-LocalRescueAdmin.ps1
+
+# Custom account name
+.\New-LocalRescueAdmin.ps1 -Username "emergency.admin"
+
+# Custom output location
+.\New-LocalRescueAdmin.ps1 -OutputDir "C:\Secure\Envelopes"
+```
+
+## After Running
+
+1. Print the credential sheet from `Rescue credentials/`.
+2. Place the printed sheet in a **sealed envelope**.
+3. Store the envelope in a physical safe or secure cabinet.
+4. **Delete the credential file and the directory.**
+5. Log the envelope location in your asset management system.
+
+## After Emergency Use
+
+1. Change the rescue account password immediately.
+2. Investigate why normal admin access was unavailable.
+3. Re-run the script to generate a new sealed envelope.
+4. Document the incident per your security policy.
