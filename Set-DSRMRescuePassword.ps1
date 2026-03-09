@@ -210,60 +210,54 @@ Write-Status "24-character non-ambiguous password generated." "OK"
 
 Write-Status "Resetting DSRM password via ntdsutil..." "INFO"
 
-# ntdsutil is interactive. We feed commands via stdin using a .NET Process
-# with redirected input/output so the password never appears in command-line
-# arguments (which could be logged by process-auditing tools).
+# ntdsutil is interactive. We write commands to a temp file and redirect it
+# via cmd.exe so that:
+#   - The password never appears in command-line arguments (audit-safe)
+#   - Each line is consumed in order without race conditions
+#   - It works regardless of OS language (commands are always English)
 
+$tempFile = $null
 try {
-    $psi = [System.Diagnostics.ProcessStartInfo]::new()
-    $psi.FileName               = "ntdsutil.exe"
-    $psi.UseShellExecute        = $false
-    $psi.RedirectStandardInput  = $true
-    $psi.RedirectStandardOutput = $true
-    $psi.RedirectStandardError  = $true
-    $psi.CreateNoWindow         = $true
+    # Build the ntdsutil command sequence in a temp file.
+    $tempFile = [System.IO.Path]::GetTempFileName()
+    $ntdsCommands = @(
+        "set dsrm password"
+        "reset password on server null"
+        $plainPassword
+        $plainPassword
+        "q"
+        "q"
+    )
+    # Write with ASCII encoding -- ntdsutil does not handle UTF-8 BOM.
+    [System.IO.File]::WriteAllLines($tempFile, $ntdsCommands,
+        [System.Text.Encoding]::ASCII)
 
-    $proc = [System.Diagnostics.Process]::Start($psi)
+    # Feed the file via cmd input redirection.
+    $result = cmd.exe /c "ntdsutil.exe < `"$tempFile`" 2>&1"
+    $exitCode = $LASTEXITCODE
 
-    # Send the interactive commands.
-    $proc.StandardInput.WriteLine("set dsrm password")
-    $proc.StandardInput.WriteLine("reset password on server null")
-    $proc.StandardInput.WriteLine($plainPassword)
-    $proc.StandardInput.WriteLine($plainPassword)
-    $proc.StandardInput.WriteLine("quit")
-    $proc.StandardInput.WriteLine("quit")
-    $proc.StandardInput.Close()
-
-    # Wait for completion (timeout 30 seconds).
-    $exited = $proc.WaitForExit(30000)
-    $stdout = $proc.StandardOutput.ReadToEnd()
-    $stderr = $proc.StandardError.ReadToEnd()
-
-    if (-not $exited) {
-        $proc.Kill()
-        Write-Status "ntdsutil timed out after 30 seconds." "ERROR"
-        exit 1
+    # Display ntdsutil output for diagnostics.
+    $outputLines = @($result) | Where-Object { $_.Trim() -ne "" }
+    foreach ($line in $outputLines) {
+        Write-Status "  ntdsutil> $line" "INFO"
     }
 
-    # ntdsutil returns 0 on success. Also check output for confirmation.
-    if ($proc.ExitCode -ne 0) {
-        Write-Status "ntdsutil exited with code $($proc.ExitCode)." "ERROR"
-        Write-Status "stdout: $stdout" "ERROR"
-        Write-Status "stderr: $stderr" "ERROR"
-        exit 1
-    }
-
-    # Look for the success message in the output.
-    if ($stdout -match "successfully|correctement|erfolgreich") {
+    # Check for success in output (handles English, French, German).
+    $fullOutput = ($result | Out-String)
+    if ($fullOutput -match "successfully|correctement|erfolgreich|avec succ") {
         Write-Status "DSRM password reset successfully." "OK"
     }
+    elseif ($fullOutput -match "echou|failed|error|erreur|fehlgeschlagen") {
+        Write-Status "ntdsutil reported a failure. Review the output above." "ERROR"
+        Write-Status "Common causes: password complexity not met, or AD DS issue." "WARN"
+        exit 1
+    }
+    elseif ($exitCode -eq 0) {
+        Write-Status "ntdsutil completed (exit code 0) -- verify output above." "WARN"
+    }
     else {
-        # ntdsutil may succeed without the exact word -- check exit code was 0.
-        Write-Status "ntdsutil completed (exit code 0). Verify output below:" "WARN"
-        # Print output but filter out blank lines.
-        $stdout -split "`n" | Where-Object { $_.Trim() -ne "" } | ForEach-Object {
-            Write-Status "  ntdsutil> $_" "INFO"
-        }
+        Write-Status "ntdsutil exited with code $exitCode." "ERROR"
+        exit 1
     }
 }
 catch {
@@ -271,8 +265,12 @@ catch {
     exit 1
 }
 finally {
-    if ($proc -and -not $proc.HasExited) { $proc.Kill() }
-    if ($proc) { $proc.Dispose() }
+    # Overwrite the temp file with zeros before deleting (contains password).
+    if ($tempFile -and (Test-Path $tempFile)) {
+        $size = (Get-Item $tempFile).Length
+        [System.IO.File]::WriteAllBytes($tempFile, [byte[]]::new($size))
+        Remove-Item -Path $tempFile -Force -ErrorAction SilentlyContinue
+    }
 }
 
 # ---------------------------------------------
