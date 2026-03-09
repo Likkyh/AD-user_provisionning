@@ -224,8 +224,8 @@ $plainPassword  = New-NonAmbiguousPassword -Length 24
 $securePassword = ConvertTo-SecureString -String $plainPassword -AsPlainText -Force
 Write-Status "24-character non-ambiguous password generated." "OK"
 
-# Temporary account name (unlikely to collide, cleaned up at the end).
-$tempAccountName = "DSRMTempSync_$(Get-Date -Format 'yyyyMMddHHmmss')"
+# Temporary account name (must be <= 20 chars for SamAccountName).
+$tempAccountName = "DSRM_$(Get-Date -Format 'yyMMddHHmmss')"
 
 # 4. Create the temporary domain account with our generated password.
 Write-Status "Creating temporary sync account '$tempAccountName'..." "INFO"
