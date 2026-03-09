@@ -5,10 +5,11 @@
 | File | Purpose |
 |------|---------|
 | `New-ADUserProvisioning.ps1` | Main AD provisioning script |
-| `New-LocalRescueAdmin.ps1` | Local rescue administrator creation script |
+| `New-LocalRescueAdmin.ps1` | Local rescue admin for member servers and workstations |
+| `Set-DSRMRescuePassword.ps1` | DSRM rescue password for Domain Controllers |
 | `AD_Users_Sample.csv` | Sample CSV -- copy and edit with real data |
 | `Created logins/` | Generated at runtime -- one `[USERNAME]_login.txt` per person |
-| `Rescue credentials/` | Generated at runtime -- sealed-envelope credential sheet |
+| `Rescue credentials/` | Generated at runtime -- sealed-envelope credential sheets |
 
 ---
 
@@ -173,18 +174,67 @@ easy to hand each person one file containing everything they need.
 ---
 ---
 
-# Local Rescue Administrator Script
+# Emergency / Break-Glass Accounts
 
-## Purpose
+Two separate scripts handle rescue access depending on the machine role:
 
-`New-LocalRescueAdmin.ps1` creates a break-glass **local** administrator
-account on a single machine. It is designed for emergency access when
-domain authentication is unavailable.
+| Machine type | Script | Account |
+|-------------|--------|---------|
+| Domain Controller | `Set-DSRMRescuePassword.ps1` | `.\Administrator` (DSRM) |
+| Member server / Workstation | `New-LocalRescueAdmin.ps1` | `.\rescue.admin` (local) |
 
-## Password Design
+Each script detects the machine type and **refuses to run** on the wrong one,
+so there is no risk of accidentally creating a local account on a DC or
+resetting DSRM on a workstation.
 
-The password is 24 characters using only **non-ambiguous** characters to
-prevent misreading from a printed sheet under pressure:
+---
+
+## What is DSRM?
+
+DSRM (Directory Services Restore Mode) is a special boot mode that exists
+only on Active Directory Domain Controllers. On a DC, the normal local
+Administrator account is disabled because all authentication goes through
+AD. However, a hidden local `.\Administrator` account still exists in the
+local SAM database specifically for DSRM emergencies.
+
+**When do you need it?**
+
+- The Active Directory database (`ntds.dit`) is corrupted
+- You need to perform an authoritative restore of AD objects
+- AD DS will not start and you cannot log in with any domain account
+- You need to perform offline maintenance on the AD database
+
+**Two ways to access DSRM:**
+
+```
+METHOD 1: Boot into DSRM
+  1. Restart the DC
+  2. Press F8 at boot -> select "Directory Services Restore Mode"
+     (or pre-configure: bcdedit /set safeboot dsrepair)
+  3. Log in as .\Administrator with the DSRM password
+  4. AD DS is completely offline -- only local SAM works
+  5. After repair, reboot: bcdedit /deletevalue safeboot
+
+METHOD 2: Stop the AD DS service (Server 2008 R2+)
+  Requires: DsrmAdminLogonBehavior = 2 in registry
+  1. Log in with a domain admin account
+  2. Stop-Service NTDS -Force
+  3. Now .\Administrator works with the DSRM password
+  4. After repair: Start-Service NTDS
+```
+
+The DSRM password is set once during DC promotion (`dcpromo`) and is often
+forgotten. The `Set-DSRMRescuePassword.ps1` script resets it to a fresh
+secure password, writes a printable credential sheet, and optionally
+configures the registry for Method 2 access.
+
+---
+
+## Shared Password Design
+
+Both scripts use the same non-ambiguous 24-character password generator.
+Characters that can be confused when handwritten or read from a printout
+under pressure are excluded:
 
 | Category | Included | Excluded (ambiguous) |
 |----------|----------|----------------------|
@@ -192,21 +242,58 @@ prevent misreading from a printed sheet under pressure:
 | Lowercase | a c d e f h i j k m n p r t u v w x y | o (vs 0), l (vs 1/I), b (vs 6), s (vs 5), z (vs 2), g (vs 9), q (vs 9) |
 | Digits | 2 3 4 5 6 7 8 9 | 0 (vs O), 1 (vs l/I) |
 
-The credential sheet prints the password twice: once as a plain string,
-once split into groups of 4 characters for easier reading.
+The credential sheet prints the password twice: once as a raw string,
+once split into **groups of 4** for easier reading.
 
-## Account Properties
+---
+
+## Script 1: Set-DSRMRescuePassword.ps1 (Domain Controllers)
+
+### What It Does
+
+1. Verifies the machine is a DC and the prompt is elevated
+2. Generates a 24-character non-ambiguous password
+3. Resets the DSRM password via `ntdsutil` (stdin redirect -- password
+   never appears in command-line arguments or process audit logs)
+4. Optionally sets `DsrmAdminLogonBehavior = 2` so DSRM logon also
+   works when the AD DS service is stopped (not just at boot)
+5. Writes `DSRM_[HOSTNAME]_rescue.txt` in `Rescue credentials/`
+
+### Usage
+
+```powershell
+# Basic -- reset DSRM password, boot-mode access only
+.\Set-DSRMRescuePassword.ps1
+
+# Also enable DSRM logon when AD DS service is stopped
+.\Set-DSRMRescuePassword.ps1 -EnableStoppedServiceLogon
+
+# Custom output directory
+.\Set-DSRMRescuePassword.ps1 -OutputDir "C:\Secure\Envelopes"
+```
+
+### Account Properties
 
 | Property | Value |
 |----------|-------|
+| Account | `.\Administrator` (built-in DSRM) |
 | Password expires | NEVER |
 | Account expires | NEVER |
-| User may change password | NO |
-| Local Administrators group | YES (joined via SID, language-independent) |
+| Access mode | DSRM boot, or AD DS stopped (if registry configured) |
 
-## Running the Script
+---
 
-Must be run from an **elevated** PowerShell prompt on the target machine:
+## Script 2: New-LocalRescueAdmin.ps1 (Servers & Workstations)
+
+### What It Does
+
+1. Verifies the machine is NOT a DC and the prompt is elevated
+2. Creates a local `rescue.admin` account (customisable name)
+3. Generates a 24-character non-ambiguous password
+4. Adds the account to local Administrators (via SID, language-independent)
+5. Writes `[USERNAME]_[HOSTNAME]_rescue.txt` in `Rescue credentials/`
+
+### Usage
 
 ```powershell
 # Default settings (account: rescue.admin)
@@ -219,17 +306,33 @@ Must be run from an **elevated** PowerShell prompt on the target machine:
 .\New-LocalRescueAdmin.ps1 -OutputDir "C:\Secure\Envelopes"
 ```
 
-## After Running
+### Account Properties
+
+| Property | Value |
+|----------|-------|
+| Account | `.\rescue.admin` (or custom) |
+| Password expires | NEVER |
+| Account expires | NEVER |
+| User may change password | NO |
+| Local Administrators group | YES |
+
+---
+
+## Sealed-Envelope Procedure (Both Scripts)
+
+### After Running
 
 1. Print the credential sheet from `Rescue credentials/`.
-2. Place the printed sheet in a **sealed envelope**.
-3. Store the envelope in a physical safe or secure cabinet.
-4. **Delete the credential file and the directory.**
-5. Log the envelope location in your asset management system.
+2. Place the printout in a **sealed envelope**.
+3. Sign across the seal (detects tampering).
+4. Store in a physical safe or locked cabinet.
+5. **Delete the credential file and the directory.**
+6. Record the envelope location in your asset register.
 
-## After Emergency Use
+### After Emergency Use
 
-1. Change the rescue account password immediately.
-2. Investigate why normal admin access was unavailable.
-3. Re-run the script to generate a new sealed envelope.
-4. Document the incident per your security policy.
+1. Reset the password immediately (re-run the script).
+2. Investigate why normal admin/domain access was unavailable.
+3. Print and seal a new envelope with the fresh password.
+4. Destroy the old envelope.
+5. Document the incident per your security policy.

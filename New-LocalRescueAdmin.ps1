@@ -5,9 +5,13 @@
 
 .DESCRIPTION
     Provisions a break-glass local administrator account intended for
-    emergency access only. The password uses only non-ambiguous characters
-    (no 0/O, 1/l/I, 8/B, 5/S, 2/Z etc.) to eliminate transcription errors
-    when reading from a sealed envelope under pressure.
+    emergency access on MEMBER SERVERS and WORKSTATIONS only.
+    This script refuses to run on Domain Controllers -- use
+    Set-DSRMRescuePassword.ps1 for DCs instead.
+
+    The password uses only non-ambiguous characters (no 0/O, 1/l/I,
+    8/B, 5/S, 2/Z etc.) to eliminate transcription errors when reading
+    from a sealed envelope under pressure.
 
     The account is created with:
       - No password expiration
@@ -167,7 +171,16 @@ if (-not $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Adm
 }
 Write-Status "Running with elevated privileges." "OK"
 
-# 2. Check the account does not already exist.
+# 2. Refuse to run on a Domain Controller.
+$osInfo = Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction SilentlyContinue
+if ($osInfo.ProductType -eq 2) {
+    Write-Status "This machine is a DOMAIN CONTROLLER." "ERROR"
+    Write-Status "Use Set-DSRMRescuePassword.ps1 for DCs instead of creating a local account." "ERROR"
+    exit 1
+}
+Write-Status "Machine type: $(if ($osInfo.ProductType -eq 3) { 'Server' } else { 'Workstation' }) -- OK." "INFO"
+
+# 3. Check the account does not already exist.
 try {
     $existing = Get-LocalUser -Name $Username -ErrorAction Stop
     Write-Status "Account '$Username' already exists (SID: $($existing.SID)). Aborting to prevent overwrite." "ERROR"
@@ -197,7 +210,7 @@ $securePassword = ConvertTo-SecureString -String $plainPassword -AsPlainText -Fo
 
 Write-Status "24-character non-ambiguous password generated." "OK"
 
-# 3. Create the local user.
+# 4. Create the local user.
 try {
     New-LocalUser -Name $Username `
         -FullName $FullName `
@@ -215,7 +228,7 @@ catch {
     exit 1
 }
 
-# 4. Add to local Administrators group.
+# 5. Add to local Administrators group.
 # Use SID S-1-5-32-544 so it works regardless of OS language.
 $adminGroupSID = [System.Security.Principal.SecurityIdentifier]::new("S-1-5-32-544")
 $adminGroupObj = Get-LocalGroup | Where-Object { $_.SID -eq $adminGroupSID }
@@ -230,7 +243,7 @@ catch {
     Write-Status "The account exists but is NOT an administrator. Fix manually." "WARN"
 }
 
-# 5. Disable interactive logon denial if a GPO blocks local accounts (informational).
+# 6. Disable interactive logon denial if a GPO blocks local accounts (informational).
 Write-Status "NOTE: If a GPO denies local logon for this account, you must add an exception." "WARN"
 
 # ---------------------------------------------
